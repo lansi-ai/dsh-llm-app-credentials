@@ -1,0 +1,32 @@
+# dsh-llm-app-credentials bundle patch — inserts the dual-face plugin row.
+#
+#   host half    (package exports ".")        → registers the `llm-app-credentials`
+#                                               LLM adapter for every configured route.
+#   browser half (package exports "./client") → the settings page for those routes.
+#
+# The plugin ships **no vendor name**: a route is whatever `providers` key the user
+# writes, and an unconfigured install still works because the host half detects the
+# local application's credential file on its own (see README).
+#
+# Install (official dsh CLI):
+#   dsh plugin --profile <name> add dsh-llm-app-credentials
+#
+# Install (dsh-forge): see README「安装」— the same row goes into
+#   $DSH_HOME/profiles/dsh-forge/cordis.patch.yml
+- insert:
+    - id: llm-app-credentials
+      name: dsh-llm-app-credentials
+      # config:
+      #   providers:            # 留空 = 全自动探测；填写 = 覆盖/新增路由
+      #     workbuddy:
+      #       displayName: WorkBuddy
+      #       baseURL: https://www.workbuddy.ai/v2
+      #       credential:
+      #         file: C:/Users/<you>/AppData/Local/CodeBuddyExtension/Data/Public/auth/workbuddy-desktop-ai.info
+      #         token: auth.accessToken
+      #         uid: account.uid
+      #         expiresAt: auth.expiresAt
+      #       attribution:
+      #         product: workbuddy-bridge
+      #         version: '0.1.0'
+      #         url: https://example.invalid

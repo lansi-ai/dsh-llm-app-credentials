@@ -1,0 +1,9 @@
+# 依赖：本目录内是「指向宿主 node_modules 的 junction」，绝不入库
+node_modules/
+
+# 工具噪音
+*.log
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
