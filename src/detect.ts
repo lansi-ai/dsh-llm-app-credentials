@@ -49,6 +49,13 @@ interface KnownSource {
  * independent installs whose catalogs only partially overlap, so the list must
  * travel with the endpoint. Only the capacities that were actually documented
  * are declared; the rest are left unset rather than guessed.
+ *
+ * `inputModalities` is declared **only** where the deployment is known to accept
+ * image input (the V4.1 model does). It is a statement about what this plugin may
+ * send, and the harness refuses an image on a route that omits it, so a wrong
+ * declaration here is visible immediately rather than silent. A deployment whose
+ * gateway rejects images should drop the field for that model in the user
+ * settings layer.
  */
 const AUTH_DIR = join('CodeBuddyExtension', 'Data', 'Public', 'auth')
 
@@ -59,7 +66,13 @@ const KNOWN_SOURCES: readonly KnownSource[] = [
     baseURL: 'https://www.workbuddy.ai/v2',
     authFileName: 'workbuddy-desktop-ai.info',
     models: [
-      { id: 'deepseek-v4.1-flash', name: 'DeepSeek V4.1 Flash', contextWindow: 300000, maxTokens: 128000 },
+      {
+        id: 'deepseek-v4.1-flash',
+        name: 'DeepSeek V4.1 Flash',
+        contextWindow: 300000,
+        maxTokens: 128000,
+        inputModalities: ['text', 'image'],
+      },
       { id: 'glm-5.3' },
       { id: 'glm-5.2' },
       { id: 'minimax-m3' },
@@ -79,7 +92,7 @@ const KNOWN_SOURCES: readonly KnownSource[] = [
     baseURL: 'https://www.codebuddy.cn/v2',
     authFileName: 'workbuddy-desktop.info',
     models: [
-      { id: 'deepseek-v4.1-flash' },
+      { id: 'deepseek-v4.1-flash', inputModalities: ['text', 'image'] },
       { id: 'deepseek-v4-pro' },
       { id: 'deepseek-v4-flash' },
       { id: 'deepseek-v3-2-volc' },

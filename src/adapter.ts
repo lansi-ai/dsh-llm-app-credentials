@@ -2,10 +2,14 @@
  * The adapter: one fetch + SSE round trip per model call.
  *
  * It is deliberately transport-only. Route lookups, credentials, prompt quirks
- * and error classification all live beside it, so this file reads as the shape of
- * a model call and nothing else. Every lookup is by the `provider` route passed
+ * and error classification all live beside it, so this file reads as the shape
+ * of a model call and nothing else. Every lookup is by the `provider` route passed
  * in, so adding an upstream is a configuration edit — no branch in here knows a
  * vendor name.
+ *
+ * Image input is a per-model declaration, not a per-route one: the adapter reads
+ * an image only when the resolved model lists `image` in its modalities, because
+ * a route may serve image-capable and text-only models side by side.
  *
  * @module dsh-llm-app-credentials/adapter
  */
@@ -23,14 +27,20 @@ import {
   type LlmResolvedModelInfo,
   type StreamChunk,
 } from '@deepseek-ai/dsh-llm'
-import { DEFAULT_REASONING_EFFORTS, DEFAULT_STREAM_IDLE_TIMEOUT_MS, OFF_EFFORT } from './config.js'
+import {
+  DEFAULT_IMAGE_MAX_BYTES,
+  DEFAULT_IMAGE_PIXEL_BUDGET,
+  DEFAULT_REASONING_EFFORTS,
+  DEFAULT_STREAM_IDLE_TIMEOUT_MS,
+  OFF_EFFORT,
+} from './config.js'
 import { readCredential } from './credential.js'
 import { classifyFailure, classifyTransportError } from './failure.js'
-import { buildRequestBody, type FileRef, type SerializeHelpers } from './serialize.js'
+import { buildRequestBody, collectImageRefs, type FileRef, type SerializeHelpers } from './serialize.js'
 import { readSse } from './sse.js'
 import { translate } from './translate.js'
 import type { Credential } from './credential.js'
-import type { ProviderConfig } from './types.js'
+import type { ImageRequestPolicy, ImageStore, ProviderConfig, RequestImage } from './types.js'
 
 /** Package name used in diagnostics. */
 export const PKG = 'dsh-llm-app-credentials'
@@ -43,6 +53,14 @@ export interface AppCredentialsAdapterOptions {
   readonly fallbackIdentity: { product: string; version: string; url: string }
   /** Host-side projection of a durable file reference, when the runtime exposes one. */
   readonly fileRequestText?: ((ref: FileRef) => string) | undefined
+  /**
+   * The host's durable attachment store, when it is mounted.
+   *
+   * A thunk rather than a value because the host may provide the service after
+   * this plugin loads; `undefined` is a valid answer and is only reported as an
+   * error when an image is actually in play.
+   */
+  readonly resolveImageStore?: (() => ImageStore | undefined) | undefined
 }
 
 /**
@@ -62,7 +80,12 @@ export class AppCredentialsAdapter extends LlmAdapter {
   override async listModels(provider: string): Promise<readonly LlmModelInfo[]> {
     const models = this.options.providers()[provider]?.models
     if (models === undefined) return []
-    return models.map((model) => ({ provider, id: model.id, name: model.name ?? model.id }))
+    return models.map((model) => ({
+      provider,
+      id: model.id,
+      name: model.name ?? model.id,
+      inputModalities: model.inputModalities ?? ['text'],
+    }))
   }
 
   override async resolveModel(provider: string, model: string): Promise<LlmResolvedModelInfo> {
@@ -74,6 +97,10 @@ export class AppCredentialsAdapter extends LlmAdapter {
       name: spec?.name ?? model,
       ...(spec?.contextWindow !== undefined ? { context: { contextWindow: spec.contextWindow } } : {}),
       ...(spec?.maxTokens !== undefined ? { defaultMaxTokens: spec.maxTokens } : {}),
+      // Stated explicitly rather than left absent: the harness reads an absent
+      // list as "unknown" and refuses image input on such a route, while an
+      // unlisted model must not accidentally look image-capable either.
+      inputModalities: spec?.inputModalities ?? ['text'],
       reasoning: reasoningInfo(profile),
     }
   }
@@ -84,8 +111,7 @@ export class AppCredentialsAdapter extends LlmAdapter {
     // picks the new one up with no restart and no refresh flow of our own.
     const credential = await readCredential(profile.credential)
     const endpoint = endpointOf(profile.baseURL)
-    const helpers: SerializeHelpers =
-      this.options.fileRequestText === undefined ? {} : { fileRequestText: this.options.fileRequestText }
+    const helpers = await this.serializeHelpers(profile, options)
     const body = buildRequestBody(options, profile, helpers)
 
     const response = await this.dispatch(endpoint, profile, credential, body, options.signal)
@@ -98,6 +124,51 @@ export class AppCredentialsAdapter extends LlmAdapter {
         idleTimeoutMs: profile.streamIdleTimeoutMs ?? DEFAULT_STREAM_IDLE_TIMEOUT_MS,
       }),
     )
+  }
+
+  /**
+   * Build the serializer's host-side helpers for one call.
+   *
+   * Image bytes are read only when the route's model declares `image` **and** the
+   * request carries at least one image, so a text-only route never pays for a
+   * projection it cannot use and keeps the degradation path untouched.
+   *
+   * @param profile - the resolved route.
+   * @param options - the request, whose messages and signal drive the reads.
+   * @returns the helpers; `requestImages` is present only when images will be sent.
+   */
+  private async serializeHelpers(profile: ProviderConfig, options: GenerateOptions): Promise<SerializeHelpers> {
+    const helpers: SerializeHelpers =
+      this.options.fileRequestText === undefined ? {} : { fileRequestText: this.options.fileRequestText }
+    if (!this.imageAllowed(profile, options.model)) return helpers
+
+    const refs = collectImageRefs(options.messages)
+    if (refs.length === 0) return helpers
+
+    const store = this.options.resolveImageStore?.()
+    if (store === undefined) {
+      throw new LlmError(
+        `${PKG}: model "${options.model}" accepts image input, but the durable attachment service is not available`,
+        'UNSUPPORTED_CONTENT',
+      )
+    }
+
+    const policy: ImageRequestPolicy = {
+      maxPixels: profile.imagePixelBudget ?? DEFAULT_IMAGE_PIXEL_BUDGET,
+      maxBytes: profile.imageMaxBytes ?? DEFAULT_IMAGE_MAX_BYTES,
+    }
+    const prepared = await Promise.all(refs.map((ref) => store.readImageRequest(ref, policy, options.signal)))
+    const requestImages = new Map<string, RequestImage>()
+    for (const [index, ref] of refs.entries()) {
+      const image = prepared[index]
+      if (image !== undefined) requestImages.set(String(ref.attachmentId), image)
+    }
+    return { ...helpers, requestImages }
+  }
+
+  /** Whether the route advertises this exact model as accepting image input. */
+  private imageAllowed(profile: ProviderConfig, model: string): boolean {
+    return profile.models?.find((candidate) => candidate.id === model)?.inputModalities?.includes('image') === true
   }
 
   /** Resolve one route, or fail loudly — an unconfigured route must not silently pick a default. */

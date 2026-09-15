@@ -26,7 +26,7 @@ import type { AdapterRegistrationHandle } from '@deepseek-ai/dsh-llm'
 import { AppCredentialsAdapter } from './adapter.js'
 import { ConfigSchema } from './config.js'
 import { detectProviders } from './detect.js'
-import type { Config, ProviderConfig } from './types.js'
+import type { Config, ImageStore, ProviderConfig } from './types.js'
 
 /** Plugin id; also the settings namespace and the client-half module id. */
 export const name = 'llm-app-credentials'
@@ -70,6 +70,7 @@ export function apply(ctx: Context, config: Config): void {
     providers: () => current().providers,
     fallbackIdentity: PLUGIN_IDENTITY,
     fileRequestText: (ref) => ctx.llm.fileRequestText(ref),
+    resolveImageStore: () => imageStoreOf(ctx),
   })
 
   let registration: AdapterRegistrationHandle | undefined
@@ -155,6 +156,29 @@ function mergeProviders(
     }
   }
   return merged
+}
+
+/**
+ * Read the host's durable attachment store, structurally.
+ *
+ * `@deepseek-ai/dsh-attachment` is deliberately **not** a peer of this plugin, so
+ * the store is recognised by the one method the adapter uses instead of by a
+ * package name. A host that mounted nothing (or something else) yields
+ * `undefined`, and the adapter turns that into an error only when an image is
+ * actually in play.
+ *
+ * @param ctx - plugin context.
+ * @returns the store, or undefined when the host exposes none.
+ */
+function imageStoreOf(ctx: Context): ImageStore | undefined {
+  const candidate: unknown = ctx.get('attachments')
+  return isImageStore(candidate) ? candidate : undefined
+}
+
+/** Whether a host service exposes the request-image projection this adapter calls. */
+function isImageStore(value: unknown): value is ImageStore {
+  if (typeof value !== 'object' || value === null) return false
+  return typeof (value as { readImageRequest?: unknown }).readImageRequest === 'function'
 }
 
 /** Read this package's own version, falling back rather than failing the boot. */

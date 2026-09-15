@@ -220,7 +220,8 @@ node scripts/install-forge.cjs --uninstall      # 摘落点 + 把补丁层那行
 | usage 互斥换算 | 上游的 `prompt_tokens` 含缓存命中，harness 的计数是互斥的，所以缓存读会被减出 `inputTokens`；会话统计里的 `cacheWrite=0` 那行不会出现 |
 | 空补全 | 「正常 stop 但零内容块」归为 `EMPTY_RESPONSE`（而不是产出一条空 assistant 消息静默结束回合） |
 | 流截断 | SSE 没有 `[DONE]` 就结束 → `STREAM_CLOSED`（而不是当成正常结束写进会话） |
-| 文本专用 | 本路由声明 text-only。历史里的图片 / 文件块降级为文本占位，不抛错——否则一条历史附件会让整段长会话再也发不出请求 |
+| 图像输入 | 按**模型**声明：`models[].inputModalities` 含 `image` 的模型才会把图片作为 `image_url`（内联 data URL）发出；工具结果里的图片会另起一条 user 消息承载（该线上 `tool` 消息不能带图）。投射上限见 `imagePixelBudget` / `imageMaxBytes` |
+| 文本降级 | 未声明 `image` 的模型，图片 / 文件块照旧降级为文本占位而不抛错——否则一条历史附件会让整段长会话再也发不出请求 |
 | 路由未配置 | 请求一个不在 `providers` 里的路由 → `NO_ADAPTER`，不静默走默认 |
 | 推理档位 | 每条路由**必定**声明「关闭」档并将其设为默认。harness 对「请求了但模型未声明」的档位是**直接拒绝**（`UNSUPPORTED_REASONING_EFFORT`，且发生在任何网络 I/O 之前），而一条不带档位的存量选择必须落到某个值上——所以「关闭」恒在且为默认 |
 
@@ -228,7 +229,8 @@ node scripts/install-forge.cjs --uninstall      # 摘落点 + 把补丁层那行
 
 - **模型清单是建议性的**，且两套部署不通用；不要照抄本地缓存里的混合目录。
 - 刷新凭据的职责在**源应用**：源应用登出后报 `MISSING_CREDENTIAL`，凭据过期报 `AUTH`。
-- 走 Node 栈的模型请求**不受**桌面「网络设置」的代理影响（那个设置作用于 Chromium 栈）。
+- 走 Node 栈的模型请求**是否经过代理**取决于宿主：官方 CLI 由 launcher 按环境变量安装出口策略；**dsh-forge 自 2026-09-15 起把「网络设置」同时镜像到 Node 栈**（`system` 取 Chromium 解析出的系统代理），此时模型请求会一并经过该代理。
+- `inputModalities` 是**声明**而不是探测：它表示本插件允许为该模型发送图片。若某个网关不接受图像输入，把该模型的 `inputModalities` 去掉即可回到 text-only 降级。
 - 设置页展示配置分层与生效值，不做凭据在线探测（那需要一个 typert Remote 命名空间，属后续增强）。
 
 ### 装法三选一（dsh-forge / 官方宿主 / 开发态）

@@ -21,6 +21,62 @@ export interface CredentialSpec {
   expiresAt?: string
 }
 
+/**
+ * Request modality a route may declare for one model.
+ *
+ * Mirrors the harness vocabulary (`LlmModelInfo.inputModalities`). The harness
+ * reads an absent list as "unknown", and the tool-side image gate refuses an
+ * image whose resolved route does not accept one — so the adapter always states
+ * a list rather than leaving the field absent.
+ */
+export type ModelModality = 'text' | 'image'
+
+/** Image media types the harness can carry (mirrors the attachment vocabulary). */
+export type ImageMediaType = 'image/png' | 'image/jpeg' | 'image/webp' | 'image/gif'
+
+/** Durable image reference carried by one `image` content block. */
+export interface ImageRef {
+  /** Opaque storage identifier; never a filesystem path. */
+  attachmentId: string
+  /** Media type verified when the image was stored. */
+  mediaType: ImageMediaType
+}
+
+/**
+ * Request-image projection policy for one route.
+ *
+ * Both bounds are enforced by the attachment store while it derives the request
+ * copy, so the wire never carries a larger image than the route allows.
+ */
+export interface ImageRequestPolicy {
+  /** Maximum width × height after aspect-preserving projection. */
+  maxPixels: number
+  /** Encoded-byte target before base64 expansion. */
+  maxBytes: number
+}
+
+/** One prepared request image: the encoded bytes plus their media type. */
+export interface RequestImage {
+  /** Encoded request bytes. */
+  data: Uint8Array
+  /** Media type of those bytes. */
+  mediaType: string
+}
+
+/**
+ * Minimal structural view of the durable attachment store (`ctx.attachments`).
+ *
+ * Declared structurally instead of imported: `@deepseek-ai/dsh-attachment` is
+ * not one of this plugin's peers (see `package.json`), so naming its package
+ * would add a dependency this plugin does not otherwise need. The store is a
+ * host service reached through `ctx.get`, the same way the file-reference
+ * projection is.
+ */
+export interface ImageStore {
+  /** Project one durable image to the bytes this request will carry. */
+  readImageRequest(ref: ImageRef, policy: ImageRequestPolicy, signal: AbortSignal | undefined): Promise<RequestImage>
+}
+
 /** One model a route advertises. Catalog membership is advisory, never routing. */
 export interface ModelSpec {
   /** Model id the upstream accepts. */
@@ -31,6 +87,15 @@ export interface ModelSpec {
   contextWindow?: number
   /** Maximum output tokens, when known. */
   maxTokens?: number
+  /**
+   * Accepted request modalities, when the deployment knows them.
+   *
+   * Declaring `image` is what lets an image reach this model at all: the harness
+   * image gate refuses one whose resolved route does not accept it. The
+   * serializer honours the same declaration, so a model without `image` keeps
+   * the text-degradation path instead of failing a call it cannot serve.
+   */
+  inputModalities?: ModelModality[]
 }
 
 /**
@@ -69,6 +134,13 @@ export interface ProviderConfig {
   quirks?: ProviderQuirks
   /** Maximum provider idle time while one stream read is outstanding. */
   streamIdleTimeoutMs?: number
+  /**
+   * Request-image projection bound for the models this route declares
+   * image-capable. Ignored by a route that declares no image modality.
+   */
+  imagePixelBudget?: number
+  /** Encoded-byte target for one projected request image (before base64 expansion). */
+  imageMaxBytes?: number
 }
 
 /** Plugin configuration: the provider routes this instance owns. */
@@ -129,10 +201,29 @@ export interface WireToolCallOut {
   function: { name: string; arguments: string }
 }
 
+/** One text part of a multimodal message. */
+export interface WireTextPart {
+  type: 'text'
+  text: string
+}
+
+/** One image part: the OpenAI-compatible `image_url` spelling of an inline image. */
+export interface WireImagePart {
+  type: 'image_url'
+  image_url: { url: string }
+}
+
+/** One content part of a multimodal message. */
+export type WireContentPart = WireTextPart | WireImagePart
+
 /** One outbound chat message. */
 export interface WireMessage {
   role: 'system' | 'user' | 'assistant' | 'tool'
-  content: string | null
+  /**
+   * Plain text for every message this plugin sends today; a part list appears
+   * only when the message actually carries an image the route can receive.
+   */
+  content: string | WireContentPart[] | null
   tool_calls?: WireToolCallOut[]
   tool_call_id?: string
   reasoning_content?: string

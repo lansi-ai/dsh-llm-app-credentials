@@ -13,6 +13,17 @@ import type { Config } from './types.js';
 /** Default maximum idle interval while one stream read is outstanding (mirrors the reference adapter). */
 export declare const DEFAULT_STREAM_IDLE_TIMEOUT_MS = 300000;
 /**
+ * Default request-image projection bounds.
+ *
+ * They match the generic pi-ai adapter's defaults, so an image projected for
+ * this route is bounded the same way as one projected for a first-party
+ * provider: at most ~4 MP after aspect-preserving scaling, and a ~1 MB encoded
+ * target before base64 expansion.
+ */
+export declare const DEFAULT_IMAGE_PIXEL_BUDGET = 4194304;
+/** Default encoded-byte target for one projected request image. */
+export declare const DEFAULT_IMAGE_MAX_BYTES = 1048576;
+/**
  * The reasoning level that means "do not send `reasoning_effort` at all".
  *
  * It is always selectable, and it is the declared default, because the harness

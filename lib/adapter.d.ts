@@ -2,16 +2,20 @@
  * The adapter: one fetch + SSE round trip per model call.
  *
  * It is deliberately transport-only. Route lookups, credentials, prompt quirks
- * and error classification all live beside it, so this file reads as the shape of
- * a model call and nothing else. Every lookup is by the `provider` route passed
+ * and error classification all live beside it, so this file reads as the shape
+ * of a model call and nothing else. Every lookup is by the `provider` route passed
  * in, so adding an upstream is a configuration edit — no branch in here knows a
  * vendor name.
+ *
+ * Image input is a per-model declaration, not a per-route one: the adapter reads
+ * an image only when the resolved model lists `image` in its modalities, because
+ * a route may serve image-capable and text-only models side by side.
  *
  * @module dsh-llm-app-credentials/adapter
  */
 import { LlmAdapter, type GenerateOptions, type LlmModelInfo, type LlmProviderInfo, type LlmResolvedModelInfo, type StreamChunk } from '@deepseek-ai/dsh-llm';
 import { type FileRef } from './serialize.js';
-import type { ProviderConfig } from './types.js';
+import type { ImageStore, ProviderConfig } from './types.js';
 /** Package name used in diagnostics. */
 export declare const PKG = "dsh-llm-app-credentials";
 /** Everything the adapter needs, resolved per call so settings changes take effect without a restart. */
@@ -26,6 +30,14 @@ export interface AppCredentialsAdapterOptions {
     };
     /** Host-side projection of a durable file reference, when the runtime exposes one. */
     readonly fileRequestText?: ((ref: FileRef) => string) | undefined;
+    /**
+     * The host's durable attachment store, when it is mounted.
+     *
+     * A thunk rather than a value because the host may provide the service after
+     * this plugin loads; `undefined` is a valid answer and is only reported as an
+     * error when an image is actually in play.
+     */
+    readonly resolveImageStore?: (() => ImageStore | undefined) | undefined;
 }
 /**
  * `LlmAdapter` over an OpenAI-compatible chat-completions endpoint whose
@@ -38,6 +50,20 @@ export declare class AppCredentialsAdapter extends LlmAdapter {
     listModels(provider: string): Promise<readonly LlmModelInfo[]>;
     resolveModel(provider: string, model: string): Promise<LlmResolvedModelInfo>;
     stream(options: GenerateOptions): AsyncGenerator<StreamChunk>;
+    /**
+     * Build the serializer's host-side helpers for one call.
+     *
+     * Image bytes are read only when the route's model declares `image` **and** the
+     * request carries at least one image, so a text-only route never pays for a
+     * projection it cannot use and keeps the degradation path untouched.
+     *
+     * @param profile - the resolved route.
+     * @param options - the request, whose messages and signal drive the reads.
+     * @returns the helpers; `requestImages` is present only when images will be sent.
+     */
+    private serializeHelpers;
+    /** Whether the route advertises this exact model as accepting image input. */
+    private imageAllowed;
     /** Resolve one route, or fail loudly — an unconfigured route must not silently pick a default. */
     private route;
     /** Perform the HTTP call, attributing it and classifying transport failures. */
