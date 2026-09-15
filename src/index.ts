@@ -62,6 +62,7 @@ export { ConfigSchema as Config } from './config.js'
  * @param config - the plugin row's configuration (the composition base layer).
  */
 export function apply(ctx: Context, config: Config): void {
+  logBuildInfo(ctx)
   // Detection sits *below* the configuration: a route from `config` wins field by
   // field, so a user can correct one detected field without restating the route.
   let current: () => Config = () => ({ providers: mergeProviders(detectProviders(), config.providers) })
@@ -179,6 +180,56 @@ function imageStoreOf(ctx: Context): ImageStore | undefined {
 function isImageStore(value: unknown): value is ImageStore {
   if (typeof value !== 'object' || value === null) return false
   return typeof (value as { readImageRequest?: unknown }).readImageRequest === 'function'
+}
+
+/**
+ * Report which build is loaded.
+ *
+ * The plugin ships no version signal of its own — `PLUGIN_IDENTITY.version`
+ * travels upstream as part of the white-label `User-Agent` and is therefore
+ * frozen — so the update story needs a separate marker. This one log line makes
+ * "which build is this install running?" answerable without opening a file.
+ *
+ * @param ctx - plugin context, for the logger.
+ */
+function logBuildInfo(ctx: Context): void {
+  const info = readBuildInfo()
+  if (info === undefined) {
+    ctx.logger.info('llm-app-credentials: loaded (no build-info.json: this build predates the marker)')
+    return
+  }
+  const dirty = info.dirty === true ? '+dirty' : ''
+  ctx.logger.info(
+    `llm-app-credentials: loaded build ${info.commitShort ?? 'unknown'}${dirty} ` +
+      `(version ${info.version ?? 'unknown'}, built ${info.commitDate ?? 'unknown'})`,
+  )
+}
+
+/** The build marker this package shipped with, or undefined when it predates the marker. */
+function readBuildInfo(): {
+  version?: string
+  commitShort?: string
+  commitDate?: string
+  dirty?: boolean
+} | undefined {
+  try {
+    const require = createRequire(import.meta.url)
+    const info = require('../lib/build-info.json') as {
+      version?: unknown
+      commitShort?: unknown
+      commitDate?: unknown
+      dirty?: unknown
+    }
+    if (info === null || typeof info !== 'object') return undefined
+    return {
+      ...(typeof info.version === 'string' ? { version: info.version } : {}),
+      ...(typeof info.commitShort === 'string' ? { commitShort: info.commitShort } : {}),
+      ...(typeof info.commitDate === 'string' ? { commitDate: info.commitDate } : {}),
+      ...(typeof info.dirty === 'boolean' ? { dirty: info.dirty } : {}),
+    }
+  } catch {
+    return undefined
+  }
 }
 
 /** Read this package's own version, falling back rather than failing the boot. */

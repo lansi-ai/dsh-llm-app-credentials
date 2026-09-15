@@ -250,6 +250,35 @@ host 侧 peer 由宿主在装载前自动供给（开发态 junction；打包态
 代理入口），因此 `link-peers.cjs` **现在只是开发便利**，不是运行前提；打包态跑它没有意义。
 `--profile` 必须与宿主自己的 profile 名一致（dsh-forge 的 profile 名就是 `dsh-forge`）。
 
+### 更新
+
+宿主**没有插件自动更新通道**（外部插件是 `$DSH_HOME/profiles` 下的文件层，宿主自更新只换应用本身），
+所以更新 = **重新执行一次安装 + 重启宿主**。
+
+| 当初怎么装的 | 更新方式 |
+|---|---|
+| 应用内一键命令（`--install-plugin github:…`） | **完全退出宿主**后重跑同一条命令：它会覆盖旧目录（日志「已覆盖旧版本目录」）并保持装载行幂等 → 装完本次启动即生效，不必再重启第二次 |
+| 本仓 `scripts/install-forge.cjs`（链接态） | 在本目录 `git pull`（+ 需要时 `npm run build`）→ 重启宿主 |
+| 本仓 `scripts/install-forge.cjs --copy` | 先 `npm run build`，再重跑 `node scripts/install-forge.cjs --copy`（脚本会先删旧副本再拷） |
+
+要点：
+
+- **必须先完全退出宿主**：外部插件只在进程启动时发现，运行中执行安装会被直接拒绝。
+- 目标机器**不需要** Node / pnpm / dsh CLI：归档自带 `lib/`，peer 由宿主装载层供给。
+- 装载行（`$DSH_HOME/profiles/dsh-forge/cordis.patch.yml`）**无需改动**：包名与 id 未变。
+- 落点被**链接**占用时，一键命令会拒绝安装（保护链接目标）→ 说明这台机器当初走的是脚本安装，用上表第 2、3 行。
+
+**确认装的是哪一版**：读包内 `lib/build-info.json`（`commit` / `commitShort` / `commitDate` / `dirty`），或看宿主日志里的一行：
+
+```
+llm-app-credentials: loaded build fb46cfa (version 0.1.0, built 2026-09-15T08:00:00+08:00)
+```
+
+- `dirty: true` 表示该构建来自**未提交**的工作区——「版本号不可信」的标志，正常发布不应出现。
+- 行为判据：模型能读图（`inputModalities` 含 `image`）是 **2026-09-15 之后**版本才有的能力；旧版读图报 `does not declare image input`，新版正常读图。
+
+维护者发版顺序：提交源码 → `npm run build`（此时 `dirty` 为 `false`，标记记录的就是刚提交的 commit）→ 提交 `lib/` → 推送。
+
 ### 代码地图
 
 ```bash

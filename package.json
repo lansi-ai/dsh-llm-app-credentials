@@ -35,7 +35,7 @@
     }
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && node scripts/build-info.cjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "link-peers": "node scripts/link-peers.cjs"
   },
